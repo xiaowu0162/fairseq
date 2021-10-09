@@ -273,6 +273,43 @@ def filter_paired_dataset_indices_by_size(src_sizes, tgt_sizes, indices, max_siz
     return indices, ignored.tolist()
 
 
+def filter_paired_dual_target_dataset_indices_by_size(src_sizes, tgt1_sizes, tgt2_sizes, indices, max_sizes):
+    """Filter a list of sample indices. Remove those that are longer
+        than specified in max_sizes.
+
+    Args:
+        indices (np.array): original array of sample indices
+        max_sizes (int or list[int] or tuple[int]): max sample size,
+            can be defined separately for src and tgt (then list or tuple)
+
+    Returns:
+        np.array: filtered sample array
+        list: list of removed indices
+    """
+    if max_sizes is None:
+        return indices, []
+    if type(max_sizes) in (int, float):
+        max_src_size, max_tgt_size = max_sizes, max_sizes
+    else:
+        max_src_size, max_tgt_size = max_sizes
+    if tgt1_sizes is None:
+        ignored = indices[src_sizes[indices] > max_src_size]
+    else:
+        ignored = indices[
+            (src_sizes[indices] > max_src_size) | (tgt1_sizes[indices] > max_tgt_size) | (tgt2_sizes[indices] > max_tgt_size)
+        ]
+    if len(ignored) > 0:
+        if tgt1_sizes is None:
+            indices = indices[src_sizes[indices] <= max_src_size]
+        else:
+            indices = indices[
+                (src_sizes[indices] <= max_src_size)
+                & (tgt1_sizes[indices] <= max_tgt_size)
+                & (tgt2_sizes[indices] <= max_tgt_size)
+            ]
+    return indices, ignored.tolist()
+
+
 def batch_by_size(
     indices,
     num_tokens_fn,

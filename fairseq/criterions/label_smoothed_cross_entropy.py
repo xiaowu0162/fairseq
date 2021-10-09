@@ -68,25 +68,38 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         """
         net_output = model(**sample["net_input"])
         loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
-        sample_size = (
-            sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
-        )
-        logging_output = {
-            "loss": loss.data,
-            "nll_loss": nll_loss.data,
-            "ntokens": sample["ntokens"],
-            "nsentences": sample["target"].size(0),
-            "sample_size": sample_size,
-        }
+        if 'dual_decoder_scheme' in model.args and model.args.dual_decoder_scheme is True:
+            sample_size = (
+                sample["target1"].size(0) if self.sentence_avg else sample["ntokens1"]
+            )
+            logging_output = {
+                "loss": loss.data,
+                "nll_loss": nll_loss.data,
+                "ntokens1": sample["ntokens1"],
+                "ntokens2": sample["ntokens2"],
+                "nsentences": sample["target1"].size(0),
+                "sample_size": sample_size,
+            }
+        else:
+            sample_size = (
+                sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
+            )
+            logging_output = {
+                "loss": loss.data,
+                "nll_loss": nll_loss.data,
+                "ntokens": sample["ntokens"],
+                "nsentences": sample["target"].size(0),
+                "sample_size": sample_size,
+            }
         if self.report_accuracy:
             n_correct, total = self.compute_accuracy(model, net_output, sample)
             logging_output["n_correct"] = utils.item(n_correct.data)
             logging_output["total"] = utils.item(total.data)
         return loss, sample_size, logging_output
 
-    def get_lprobs_and_target(self, model, net_output, sample):
-        lprobs = model.get_normalized_probs(net_output, log_probs=True)
-        target = model.get_targets(sample, net_output)
+    def get_lprobs_and_target(self, model, net_output, sample, target1=None, target2=None):
+        lprobs = model.get_normalized_probs(net_output, log_probs=True, target1=target1, target2=target2)
+        target = model.get_targets(sample, net_output, target1=target1, target2=target2)
         if self.ignore_prefix_size > 0:
             if getattr(lprobs, "batch_first", False):
                 lprobs = lprobs[:, self.ignore_prefix_size :, :].contiguous()
@@ -97,15 +110,40 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         return lprobs.view(-1, lprobs.size(-1)), target.view(-1)
 
     def compute_loss(self, model, net_output, sample, reduce=True):
-        lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
-        loss, nll_loss = label_smoothed_nll_loss(
-            lprobs,
-            target,
-            self.eps,
-            ignore_index=self.padding_idx,
-            reduce=reduce,
-        )
-        return loss, nll_loss
+        if 'dual_decoder_scheme' in model.args and model.args.dual_decoder_scheme is True:
+            x1, x2, extra1, extra2 = net_output
+            loss, nll_loss = None, None
+            if x1 is not None:
+                lprobs1, target1 = self.get_lprobs_and_target(model, (x1, extra1), sample, target1=True)
+                loss1, nll_loss1 = label_smoothed_nll_loss(
+                    lprobs1,
+                    target1,
+                    self.eps,
+                    ignore_index=self.padding_idx,
+                    reduce=reduce,
+                )
+                loss, nll_loss = loss1, nll_loss1
+            if x2 is not None:
+                lprobs2, target2 = self.get_lprobs_and_target(model, (x2, extra2), sample, target2=True)
+                loss2, nll_loss2 = label_smoothed_nll_loss(
+                    lprobs2,
+                    target2,
+                    self.eps,
+                    ignore_index=self.padding_idx,
+                    reduce=reduce,
+                )
+                loss, nll_loss = ((loss+loss2)/2, (nll_loss+nll_loss2)/2) if loss is not None else (loss2, nll_loss2)
+            return loss, nll_loss
+        else:
+            lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
+            loss, nll_loss = label_smoothed_nll_loss(
+                lprobs,
+                target,
+                self.eps,
+                ignore_index=self.padding_idx,
+                reduce=reduce,
+            )
+            return loss, nll_loss
 
     def compute_accuracy(self, model, net_output, sample):
         lprobs, target = self.get_lprobs_and_target(model, net_output, sample)

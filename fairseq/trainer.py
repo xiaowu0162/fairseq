@@ -882,6 +882,14 @@ class Trainer(object):
                     sample["target"] = utils.move_to_cuda(
                         sample["target"], device=self.last_device
                     )
+                if "target1" in sample:
+                    sample["target1"] = utils.move_to_cuda(
+                        sample["target1"], device=self.last_device
+                    )
+                if "target2" in sample:
+                    sample["target2"] = utils.move_to_cuda(
+                        sample["target2"], device=self.last_device
+                    )
             else:
                 sample = utils.move_to_cuda(sample)
 

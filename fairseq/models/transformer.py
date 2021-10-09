@@ -11,6 +11,7 @@ import torch.nn as nn
 from fairseq import utils
 from fairseq.models import (
     FairseqEncoder,
+    FairseqDecoder,
     FairseqEncoderDecoderModel,
     FairseqIncrementalDecoder,
     register_model,
@@ -241,12 +242,21 @@ class TransformerModel(FairseqEncoderDecoderModel):
 
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
-        return TransformerDecoder(
-            args,
-            tgt_dict,
-            embed_tokens,
-            no_encoder_attn=getattr(args, "no_cross_attention", False),
-        )
+        # return TransformerDecoder(
+        if 'dual_decoder_scheme' in args and args.dual_decoder_scheme:
+            return TransformerDualDecoder(
+                args,
+                tgt_dict,
+                embed_tokens,
+                no_encoder_attn=getattr(args, "no_cross_attention", False),
+            )
+        else:
+            return TransformerDecoder(
+                args,
+                tgt_dict,
+                embed_tokens,
+                no_encoder_attn=getattr(args, "no_cross_attention", False),
+            )
 
     # TorchScript doesn't support optional arguments with variable length (**kwargs).
     # Current workaround is to add union of all arguments in child classes.
@@ -278,6 +288,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
             src_lengths=src_lengths,
             return_all_hiddens=return_all_hiddens,
         )
+        
         return decoder_out
 
     # Since get_normalized_probs is in the Fairseq Model which is not scriptable,
@@ -289,9 +300,11 @@ class TransformerModel(FairseqEncoderDecoderModel):
         net_output: Tuple[Tensor, Optional[Dict[str, List[Optional[Tensor]]]]],
         log_probs: bool,
         sample: Optional[Dict[str, Tensor]] = None,
+        target1=None,
+        target2=None
     ):
         """Get normalized probabilities (or log probs) from a net's output."""
-        return self.get_normalized_probs_scriptable(net_output, log_probs, sample)
+        return self.get_normalized_probs_scriptable(net_output, log_probs, sample, target1=target1, target2=target2)
 
 
 class TransformerEncoder(FairseqEncoder):
@@ -903,6 +916,72 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         return state_dict
 
+
+class TransformerDualDecoder(FairseqDecoder):
+    """
+    Two transformer decoders with identical architectures.
+    Designed and implemented for BARTDualDecoderModel only.
+
+    Args:
+        args (argparse.Namespace): parsed command-line arguments
+        dictionary (~fairseq.data.Dictionary): decoding dictionary
+        embed_tokens (torch.nn.Embedding): output embedding
+        no_encoder_attn (bool, optional): whether to attend to encoder outputs
+            (default: False).
+    """
+
+    def __init__(self, args, dictionary, embed_tokens, no_encoder_attn=False):
+        self.args = args
+        super().__init__(dictionary)
+        # assert (self.args.disable_decoder1 or self.args.disable_decoder2) and not (self.args.disable_decoder1 and self.args.disable_decoder2)
+        self.decoder1 = TransformerDecoder(args, dictionary, embed_tokens, no_encoder_attn=no_encoder_attn)
+        self.decoder2 = TransformerDecoder(args, dictionary, embed_tokens, no_encoder_attn=no_encoder_attn)
+        
+    def forward(
+        self,
+        prev_output_tokens1,
+        prev_output_tokens2, 
+        encoder_out: Optional[EncoderOut] = None,
+        incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
+        features_only: bool = False,
+        full_context_alignment: bool = False,
+        alignment_layer: Optional[int] = None,
+        alignment_heads: Optional[int] = None,
+        src_lengths: Optional[Any] = None,
+        return_all_hiddens: bool = False,
+    ):
+        x1, x2, extra1, extra2 = None, None, None, None
+        if not self.args.disable_decoder1:
+            x1, extra1 = self.decoder1.forward(prev_output_tokens1, encoder_out, incremental_state, features_only, full_context_alignment, alignment_layer, alignment_heads, src_lengths, return_all_hiddens)
+        if not self.args.disable_decoder2:
+            x2, extra2 = self.decoder2.forward(prev_output_tokens2, encoder_out, incremental_state, features_only, full_context_alignment, alignment_layer, alignment_heads, src_lengths, return_all_hiddens)
+
+        return x1, x2, extra1, extra2
+
+    # def extract_features(
+    #     self,
+    #     prev_output_tokens,
+    #     encoder_out: Optional[EncoderOut] = None,
+    #     incremental_state: Optional[Dict[str, Dict[str, Optional[Tensor]]]] = None,
+    #     full_context_alignment: bool = False,
+    #     alignment_layer: Optional[int] = None,
+    #     alignment_heads: Optional[int] = None,
+    # ):
+    #     """not used for current experiments"""
+    #     if self.args.disable_decoder2:
+    #         return self.decoder1.extract_features(prev_output_tokens, encoder_out, incremental_state, full_context_alignment, alignment_layer, alignment_heads)
+    #     elif self.args.disable_decoder1:
+    #         return self.decoder2.extract_features(prev_output_tokens, encoder_out, incremental_state, full_context_alignment, alignment_layer, alignment_heads)
+    #     else:
+    #         raise RuntimeError("dual decoder scheme is not supported yet")
+
+    # def output_layer(self, features):
+    #     if self.args.disable_decoder2:
+    #         return self.decoder1.output_layer(features)
+    #     elif self.args.disable_decoder1:
+    #         return self.decoder2.output_layer(features)
+    #     else:
+    #         raise RuntimeError("dual decoder scheme is not supported yet")
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)

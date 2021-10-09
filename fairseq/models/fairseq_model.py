@@ -43,9 +43,16 @@ class BaseFairseqModel(nn.Module):
         """Build a new model instance."""
         raise NotImplementedError("Model must implement the build_model method")
 
-    def get_targets(self, sample, net_output):
+    def get_targets(self, sample, net_output, target1=None, target2=None):
         """Get targets from either the sample or the net's output."""
-        return sample["target"]
+        if target1:
+            assert 'target1' in sample
+            return sample['target1']
+        elif target2:
+            assert 'target2' in sample
+            return sample['target2']
+        else:
+            return sample["target"]
 
     def get_normalized_probs(
         self,
@@ -65,6 +72,8 @@ class BaseFairseqModel(nn.Module):
         net_output: Tuple[Tensor, Optional[Dict[str, List[Optional[Tensor]]]]],
         log_probs: bool,
         sample: Optional[Dict[str, Tensor]] = None,
+        target1=None,
+        target2=None
     ):
         """Scriptable helper function for get_normalized_probs in ~BaseFairseqModel"""
         if hasattr(self, "decoder"):

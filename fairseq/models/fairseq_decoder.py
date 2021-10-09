@@ -60,19 +60,45 @@ class FairseqDecoder(nn.Module):
         net_output: Tuple[Tensor, Optional[Dict[str, List[Optional[Tensor]]]]],
         log_probs: bool,
         sample: Optional[Dict[str, Tensor]] = None,
+        target1=None,
+        target2=None
     ):
         """Get normalized probabilities (or log probs) from a net's output."""
 
         if hasattr(self, "adaptive_softmax") and self.adaptive_softmax is not None:
             if sample is not None:
-                assert "target" in sample
-                target = sample["target"]
+                if target1:
+                    assert "target1" in sample
+                    target = sample["target1"]
+                elif target2:
+                    assert "target2" in sample
+                    target = sample["target2"]
+                else:
+                    assert "target" in sample
+                    target = sample["target"]
             else:
                 target = None
-            out = self.adaptive_softmax.get_log_prob(net_output[0], target=target)
+            
+            if target1:
+                assert len(net_output) == 4
+                out = self.adaptive_softmax.get_log_prob(net_output[0], target=target)
+            elif target2:
+                assert len(net_output) == 4
+                out = self.adaptive_softmax.get_log_prob(net_output[1], target=target)
+            else:
+                out = self.adaptive_softmax.get_log_prob(net_output[0], target=target)
+            
             return out.exp_() if not log_probs else out
 
-        logits = net_output[0]
+        if target1:
+            assert len(net_output) == 4
+            logits = net_output[0]
+        elif target2:
+            assert len(net_output) == 4
+            logits = net_output[1]
+        else:
+            logits = net_output[0]
+            
         if log_probs:
             return utils.log_softmax(logits, dim=-1, onnx_trace=self.onnx_trace)
         else:
