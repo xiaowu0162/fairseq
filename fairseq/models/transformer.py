@@ -243,7 +243,7 @@ class TransformerModel(FairseqEncoderDecoderModel):
     @classmethod
     def build_decoder(cls, args, tgt_dict, embed_tokens):
         # return TransformerDecoder(
-        if 'dual_decoder_scheme' in args and args.dual_decoder_scheme:
+        if 'dual_decoder_scheme' in args and args.dual_decoder_scheme and "dual" in args.task.lower():
             return TransformerDualDecoder(
                 args,
                 tgt_dict,

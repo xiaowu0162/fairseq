@@ -264,6 +264,22 @@ class BARTModel(TransformerModel):
                     logger.info("Overwriting", prefix + "classification_heads." + k)
                     state_dict[prefix + "classification_heads." + k] = v
 
+        # for inference with dual decoder
+        # keep only one decoder based on the arguments
+        if 'decoder_number' in self.args:
+            desired_decoder = 'decoder' + str(self.args.decoder_number)
+            undesired_decoder = 'decoder' + str(3-self.args.decoder_number)
+            for k in list(state_dict.keys()):
+                if desired_decoder in k:
+                    if 'version' in k:
+                        state_dict['decoder.version'] = state_dict[k]
+                    else:
+                        new_k = k.replace(desired_decoder+'.', '')
+                        state_dict[new_k] = state_dict[k]
+                    state_dict.pop(k)
+                elif undesired_decoder in k:
+                    state_dict.pop(k)
+
 
 class BARTClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""

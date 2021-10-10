@@ -279,6 +279,10 @@ def load_model_ensemble_and_task(
             state = load_checkpoint_to_cpu(filename, arg_overrides)
             if shard_idx == 0:
                 args = state["args"]
+                if args.task == "translation-dual-target":
+                    args.task = "translation"
+                    args.arch = "bart_base"
+                    task = None
                 if task is None:
                     task = tasks.setup_task(args)
 
