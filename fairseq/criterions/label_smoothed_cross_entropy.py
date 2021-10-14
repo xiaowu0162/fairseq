@@ -60,27 +60,38 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
 
     def forward(self, model, sample, reduce=True):
         """Compute the loss for the given sample.
-
         Returns a tuple with three elements:
         1) the loss
         2) the sample size, which is used as the denominator for the gradient
         3) logging outputs to display while training
         """
-        net_output = model(**sample["net_input"])
-        loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
         if 'dual_decoder_scheme' in model.args and model.args.dual_decoder_scheme is True:
+            LabelSmoothedCrossEntropyCriterion.dual_decoder_scheme = True
+            net_output = model(**sample["net_input"])
+            # loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
+            loss, loss1, loss2, nll_loss1, nll_loss2 = self.compute_loss(model, net_output, sample, reduce=reduce)
             sample_size = (
                 sample["target1"].size(0) if self.sentence_avg else sample["ntokens1"]
             )
+            sample_size2 = (
+                sample["target2"].size(0) if self.sentence_avg else sample["ntokens2"]
+            )
             logging_output = {
                 "loss": loss.data,
-                "nll_loss": nll_loss.data,
+                "loss1": loss1.data,
+                "loss2": loss2.data,
+                "nll_loss1": nll_loss1.data,
+                "nll_loss2": nll_loss2.data,
+                # "ntokens": sample["ntokens1"],
                 "ntokens1": sample["ntokens1"],
                 "ntokens2": sample["ntokens2"],
                 "nsentences": sample["target1"].size(0),
                 "sample_size": sample_size,
+                "sample_size2": sample_size2,
             }
         else:
+            net_output = model(**sample["net_input"])
+            loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
             sample_size = (
                 sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
             )
@@ -110,9 +121,9 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         return lprobs.view(-1, lprobs.size(-1)), target.view(-1)
 
     def compute_loss(self, model, net_output, sample, reduce=True):
-        if 'dual_decoder_scheme' in model.args and model.args.dual_decoder_scheme is True:
+        if LabelSmoothedCrossEntropyCriterion.dual_decoder_scheme:
             x1, x2, extra1, extra2 = net_output
-            loss, nll_loss = None, None
+            loss, loss1, loss2, nll_loss1, nll_loss2 = None, None, None, None, None
             if x1 is not None:
                 lprobs1, target1 = self.get_lprobs_and_target(model, (x1, extra1), sample, target1=True)
                 loss1, nll_loss1 = label_smoothed_nll_loss(
@@ -122,7 +133,7 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                     ignore_index=self.padding_idx,
                     reduce=reduce,
                 )
-                loss, nll_loss = loss1, nll_loss1
+                loss = loss1
             if x2 is not None:
                 lprobs2, target2 = self.get_lprobs_and_target(model, (x2, extra2), sample, target2=True)
                 loss2, nll_loss2 = label_smoothed_nll_loss(
@@ -132,8 +143,8 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                     ignore_index=self.padding_idx,
                     reduce=reduce,
                 )
-                loss, nll_loss = ((loss+loss2)/2, (nll_loss+nll_loss2)/2) if loss is not None else (loss2, nll_loss2)
-            return loss, nll_loss
+                loss = (loss+loss2)/2 if loss is not None else loss2
+            return loss, loss1, loss2, nll_loss1, nll_loss2
         else:
             lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
             loss, nll_loss = label_smoothed_nll_loss(
@@ -157,36 +168,85 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
     @classmethod
     def reduce_metrics(cls, logging_outputs) -> None:
         """Aggregate logging outputs from data parallel training."""
-        loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
-        nll_loss_sum = sum(log.get("nll_loss", 0) for log in logging_outputs)
-        ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
-        sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+        if cls.dual_decoder_scheme:
+            loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+            loss_sum1 = sum(log.get("loss1", 0) for log in logging_outputs)
+            loss_sum2 = sum(log.get("loss2", 0) for log in logging_outputs)
+            nll_loss_sum1 = sum(log.get("nll_loss1", 0) for log in logging_outputs)
+            nll_loss_sum2 = sum(log.get("nll_loss2", 0) for log in logging_outputs)
+            ntokens1 = sum(log.get("ntokens1", 0) for log in logging_outputs)
+            ntokens2 = sum(log.get("ntokens2", 0) for log in logging_outputs)
+            sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+            sample_size2 = sum(log.get("sample_size2", 0) for log in logging_outputs)
 
-        metrics.log_scalar(
-            "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
-        )
-        metrics.log_scalar(
-            "nll_loss", nll_loss_sum / ntokens / math.log(2), ntokens, round=3
-        )
-        metrics.log_derived(
-            "ppl", lambda meters: utils.get_perplexity(meters["nll_loss"].avg)
-        )
-
-        total = utils.item(sum(log.get("total", 0) for log in logging_outputs))
-        if total > 0:
-            metrics.log_scalar("total", total)
-            n_correct = utils.item(
-                sum(log.get("n_correct", 0) for log in logging_outputs)
+            metrics.log_scalar(
+                "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
             )
-            metrics.log_scalar("n_correct", n_correct)
+            metrics.log_scalar(
+                "loss1", loss_sum1 / sample_size / math.log(2), sample_size, round=3
+            )
+            metrics.log_scalar(
+                "loss2", loss_sum2 / sample_size2 / math.log(2), sample_size2, round=3
+            )
+            metrics.log_scalar(
+                "nll_loss1", nll_loss_sum1 / ntokens1 / math.log(2), ntokens1, round=3
+            )
+            metrics.log_scalar(
+                "nll_loss2", nll_loss_sum2 / ntokens2 / math.log(2), ntokens2, round=3
+            )
             metrics.log_derived(
-                "accuracy",
-                lambda meters: round(
-                    meters["n_correct"].sum * 100.0 / meters["total"].sum, 3
-                )
-                if meters["total"].sum > 0
-                else float("nan"),
+                "ppl1", lambda meters: utils.get_perplexity(meters["nll_loss1"].avg)
             )
+            metrics.log_derived(
+                "ppl2", lambda meters: utils.get_perplexity(meters["nll_loss2"].avg)
+            )
+
+            total = utils.item(sum(log.get("total", 0) for log in logging_outputs))
+            if total > 0:
+                metrics.log_scalar("total", total)
+                n_correct = utils.item(
+                    sum(log.get("n_correct", 0) for log in logging_outputs)
+                )
+                metrics.log_scalar("n_correct", n_correct)
+                metrics.log_derived(
+                    "accuracy",
+                    lambda meters: round(
+                        meters["n_correct"].sum * 100.0 / meters["total"].sum, 3
+                    )
+                    if meters["total"].sum > 0
+                    else float("nan"),
+                )
+        else:
+            loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
+            nll_loss_sum = sum(log.get("nll_loss", 0) for log in logging_outputs)
+            ntokens = sum(log.get("ntokens", 0) for log in logging_outputs)
+            sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
+
+            metrics.log_scalar(
+                "loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+            )
+            metrics.log_scalar(
+                "nll_loss", nll_loss_sum / ntokens / math.log(2), ntokens, round=3
+            )
+            metrics.log_derived(
+                "ppl", lambda meters: utils.get_perplexity(meters["nll_loss"].avg)
+            )
+
+            total = utils.item(sum(log.get("total", 0) for log in logging_outputs))
+            if total > 0:
+                metrics.log_scalar("total", total)
+                n_correct = utils.item(
+                    sum(log.get("n_correct", 0) for log in logging_outputs)
+                )
+                metrics.log_scalar("n_correct", n_correct)
+                metrics.log_derived(
+                    "accuracy",
+                    lambda meters: round(
+                        meters["n_correct"].sum * 100.0 / meters["total"].sum, 3
+                    )
+                    if meters["total"].sum > 0
+                    else float("nan"),
+                )
 
     @staticmethod
     def logging_outputs_can_be_summed() -> bool:
