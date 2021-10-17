@@ -291,6 +291,10 @@ class BARTDualDecoderModel(TransformerModel):
                         state_dict[new_name_1] = weight_val
                         state_dict[new_name_2] = copy.deepcopy(state_dict[new_name_1])
             
+            if 'decoder.decoder1.output_projection.weight' not in state_dict:
+                state_dict['decoder.decoder1.output_projection.weight'] = state_dict['encoder.embed_tokens.weight']
+                state_dict['decoder.decoder2.output_projection.weight'] = state_dict['encoder.embed_tokens.weight']
+            
             state_dict.pop('decoder.version')
 
         # Copy any newly-added classification heads into the state dict
