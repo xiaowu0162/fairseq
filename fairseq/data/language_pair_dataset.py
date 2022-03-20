@@ -226,7 +226,11 @@ class LanguagePairDataset(FairseqDataset):
         src_lang_id=None,
         tgt_lang_id=None,
         pad_to_multiple=1,
+        ssp_recovery=False,
+        mask_token_idx=None
     ):
+        self.ssp_recovery = ssp_recovery
+        self.mask_token_idx = mask_token_idx
         if tgt_dict is not None:
             assert src_dict.pad() == tgt_dict.pad()
             assert src_dict.eos() == tgt_dict.eos()
@@ -326,6 +330,14 @@ class LanguagePairDataset(FairseqDataset):
             eos = self.src_dict.eos()
             if self.src[index][-1] == eos:
                 src_item = self.src[index][:-1]
+
+        if self.ssp_recovery:
+            # replace unk by 51200 for salient span recovery pre-training
+            # print(src_item)
+            src_item[src_item==3] = self.mask_token_idx
+            # print(src_item) 
+            # print(tgt_item)
+            # exit()
 
         example = {
             "id": index,

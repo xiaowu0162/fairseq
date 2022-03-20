@@ -52,6 +52,8 @@ def load_langpair_dataset(
     num_buckets=0,
     shuffle=True,
     pad_to_multiple=1,
+    ssp_recovery=False,
+    mask_token_idx=None
 ):
     def split_exists(split, src, tgt, lang, data_path):
         filename = os.path.join(data_path, "{}.{}-{}.{}".format(split, src, tgt, lang))
@@ -158,6 +160,8 @@ def load_langpair_dataset(
         num_buckets=num_buckets,
         shuffle=shuffle,
         pad_to_multiple=pad_to_multiple,
+        ssp_recovery=ssp_recovery,
+        mask_token_idx=mask_token_idx
     )
 
 
@@ -235,10 +239,20 @@ class TranslationTask(LegacyFairseqTask):
                             help='print sample generations during validation')
         # fmt: on
 
+
+        parser.add_argument('--ssp-recovery', action='store_true', default=False,
+                            help='Perform Salient Span Recovery using Tranlation Task')
+
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
+        
+        if hasattr(args, 'ssp_recovery') and args.ssp_recovery:
+            self.tgt_dict.add_symbol("<mask>")
+            self.mask_idx = self.src_dict.add_symbol("<mask>")
+        else:
+            self.mask_idx = None
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -312,6 +326,8 @@ class TranslationTask(LegacyFairseqTask):
             num_buckets=self.args.num_batch_buckets,
             shuffle=(split != "test"),
             pad_to_multiple=self.args.required_seq_len_multiple,
+            ssp_recovery=self.args.ssp_recovery  if hasattr(self.args, 'ssp_recovery') else False,
+            mask_token_idx=self.mask_idx
         )
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, constraints=None):
@@ -321,6 +337,8 @@ class TranslationTask(LegacyFairseqTask):
             self.source_dictionary,
             tgt_dict=self.target_dictionary,
             constraints=constraints,
+            ssp_recovery=self.args.ssp_recovery if hasattr(self.args, 'ssp_recovery') else False,
+            mask_token_idx=self.mask_idx
         )
 
     def build_model(self, args):

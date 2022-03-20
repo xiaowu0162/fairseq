@@ -53,6 +53,8 @@ def load_langpair_dual_target_dataset(
     num_buckets=0,
     shuffle=True,
     pad_to_multiple=1,
+    ssp_recovery=False,
+    mask_token_idx=None
 ):
     def split_exists(split, src, tgt, lang, data_path):
         filename = os.path.join(data_path, "{}.{}-{}.{}".format(split, src, tgt, lang))
@@ -186,6 +188,8 @@ def load_langpair_dual_target_dataset(
         num_buckets=num_buckets,
         shuffle=shuffle,
         pad_to_multiple=pad_to_multiple,
+        ssp_recovery=ssp_recovery,
+        mask_token_idx=mask_token_idx
     )
 
 
@@ -204,6 +208,16 @@ class TranslationDualTargetTask(LegacyFairseqTask):
     @staticmethod
     def add_args(parser):
         """Add task-specific arguments to the parser."""
+        # for balancing the loss between two tasks
+        parser.add_argument('--lambda-task-1', type=float, required=True,
+                            help='lambda for loss of task 1 (task two has 1-lambda correspondingly)')
+
+        # for alternatively training two decoders
+        parser.add_argument('--alternate-training', default=False, action='store_true',
+                            help='alternatively train decoder 1 and 2')
+        parser.add_argument('--decoder1-ratio', type=float, default=1.0,
+                            help='ratio for training decoder 1 for how much of all steps (between 0 and 1); only used when alternate-training=True')
+
         # fmt: off
         parser.add_argument('data', help='colon separated path to data directories list, \
                             will be iterated upon during epochs in round-robin manner; \
@@ -252,11 +266,21 @@ class TranslationDualTargetTask(LegacyFairseqTask):
         parser.add_argument('--eval-bleu-print-samples', action='store_true',
                             help='print sample generations during validation')
         # fmt: on
+        
+        parser.add_argument('--ssp-recovery', action='store_true', default=False,
+                            help='Perform Salient Span Recovery using Tranlation Task')
+
 
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
+        
+        if hasattr(args, 'ssp_recovery') and args.ssp_recovery:
+            self.tgt_dict.add_symbol("<mask>")
+            self.mask_idx = self.src_dict.add_symbol("<mask>")
+        else:
+            self.mask_idx = None
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -330,6 +354,8 @@ class TranslationDualTargetTask(LegacyFairseqTask):
             num_buckets=self.args.num_batch_buckets,
             shuffle=(split != "test"),
             pad_to_multiple=self.args.required_seq_len_multiple,
+            ssp_recovery=self.args.ssp_recovery  if hasattr(self.args, 'ssp_recovery') else False,
+            mask_token_idx=self.mask_idx
         )
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, constraints=None):
@@ -346,6 +372,8 @@ class TranslationDualTargetTask(LegacyFairseqTask):
             self.source_dictionary,
             tgt_dict=self.target_dictionary,
             constraints=constraints,
+            ssp_recovery=self.args.ssp_recovery if hasattr(self.args, 'ssp_recovery') else False,
+            mask_token_idx=self.mask_idx
         )
 
     def build_model(self, args):

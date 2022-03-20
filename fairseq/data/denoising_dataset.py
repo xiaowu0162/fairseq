@@ -294,6 +294,7 @@ class DenoisingDataset(FairseqDataset):
         ].squeeze(1)
         mask_random = torch.FloatTensor(num_to_mask).uniform_() < self.random_ratio
 
+        # print(source)
         source_length = source.size(0)
         assert source_length - 1 not in indices
         to_keep = torch.ones(source_length, dtype=torch.bool)
@@ -308,6 +309,15 @@ class DenoisingDataset(FairseqDataset):
             source[indices[mask_random]] = torch.randint(
                 1, len(self.vocab), size=(mask_random.sum(),)
             )
+
+                
+        # print(source)
+        # print(is_word_start)
+        # print(word_starts)
+        # print(indices)
+        # print(mask_random)
+        # print(to_keep)
+        
 
         if self.mask_span_distribution is not None:
             assert len(lengths.size()) == 1
@@ -348,6 +358,8 @@ class DenoisingDataset(FairseqDataset):
                 assert source_length - 1 not in indices
 
         source = source[to_keep]
+        # print(source)
+        # exit()
 
         if num_inserts > 0:
             source = self.add_insertion_noise(source, num_inserts / source.size(0))

@@ -32,6 +32,8 @@ def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=None, reduce=T
 
 @register_criterion("label_smoothed_cross_entropy")
 class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
+    dual_decoder_scheme = False
+
     def __init__(
         self,
         task,
@@ -69,7 +71,7 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
             LabelSmoothedCrossEntropyCriterion.dual_decoder_scheme = True
             net_output = model(**sample["net_input"])
             # loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
-            loss, loss1, loss2, nll_loss1, nll_loss2 = self.compute_loss(model, net_output, sample, reduce=reduce)
+            loss, loss1, loss2, nll_loss1, nll_loss2 = self.compute_loss(model, net_output, sample, reduce=reduce, lambda_1=model.args.lambda_task_1, alternate=model.args.alternate_training, decoder1_ratio=model.args.decoder1_ratio)
             sample_size = (
                 sample["target1"].size(0) if self.sentence_avg else sample["ntokens1"]
             )
@@ -120,8 +122,10 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                 target = target[self.ignore_prefix_size :, :].contiguous()
         return lprobs.view(-1, lprobs.size(-1)), target.view(-1)
 
-    def compute_loss(self, model, net_output, sample, reduce=True):
+    def compute_loss(self, model, net_output, sample, reduce=True, lambda_1=None, alternate=False, decoder1_ratio=1):
         if LabelSmoothedCrossEntropyCriterion.dual_decoder_scheme:
+            assert lambda_1 is not None and 0 <= lambda_1 <= 1
+            lambda_2 = 1 - lambda_1
             x1, x2, extra1, extra2 = net_output
             loss, loss1, loss2, nll_loss1, nll_loss2 = None, None, None, None, None
             if x1 is not None:
@@ -133,7 +137,7 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                     ignore_index=self.padding_idx,
                     reduce=reduce,
                 )
-                loss = loss1
+                # loss = loss1 * lambda_1
             if x2 is not None:
                 lprobs2, target2 = self.get_lprobs_and_target(model, (x2, extra2), sample, target2=True)
                 loss2, nll_loss2 = label_smoothed_nll_loss(
@@ -143,7 +147,16 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
                     ignore_index=self.padding_idx,
                     reduce=reduce,
                 )
-                loss = (loss+loss2)/2 if loss is not None else loss2
+                # loss = loss + lambda_2 * loss2 if loss is not None else loss2 * lambda_2
+            if alternate:
+                r = torch.rand(1)
+                if r < decoder1_ratio:
+                    loss = (loss1 if loss1 is not None else 0) * lambda_1
+                else:
+                    loss = (loss2 if loss2 is not None else 0) * lambda_2
+            else:
+                loss = (loss1 if loss1 is not None else 0) * lambda_1 + (loss2 if loss2 is not None else 0) * lambda_2
+            # print(loss, loss1, loss2)
             return loss, loss1, loss2, nll_loss1, nll_loss2
         else:
             lprobs, target = self.get_lprobs_and_target(model, net_output, sample)

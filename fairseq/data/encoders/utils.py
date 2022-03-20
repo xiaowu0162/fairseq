@@ -26,5 +26,8 @@ def get_whole_word_mask(args, dictionary):
         mask_whole_words = torch.ByteTensor(
             list(map(is_beginning_of_word, range(len(dictionary))))
         )
+        # print(type(bpe))
+        # print(zip(dictionary[1000:1100]), list(map(is_beginning_of_word, range(1000,1100))))
+        # exit()
         return mask_whole_words
     return None

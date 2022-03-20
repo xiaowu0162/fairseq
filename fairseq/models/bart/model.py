@@ -61,6 +61,12 @@ class BARTModel(TransformerModel):
             action="store_true",
             help="Apply spectral normalization on the classification head",
         )
+        parser.add_argument(
+            "--decoder-number",
+            type=int,
+            default=1,
+            help="Used when loading from dual decoder models",
+        )
 
     @property
     def supported_targets(self):
@@ -149,6 +155,42 @@ class BARTModel(TransformerModel):
 
     def upgrade_state_dict_named(self, state_dict, name):
         super().upgrade_state_dict_named(state_dict, name)
+
+
+
+        # for inference with dual decoder
+        # keep only one decoder based on the arguments
+        if 'decoder_number' in self.args:
+            desired_decoder = 'decoder' + str(self.args.decoder_number)
+            undesired_decoder = 'decoder' + str(3-self.args.decoder_number)
+            logger.info("Loading weights from {}, throwing away weights from".format(desired_decoder, undesired_decoder))
+            for k in list(state_dict.keys()):
+                if desired_decoder in k:
+                    if 'version' in k:
+                        state_dict['decoder.version'] = state_dict[k]
+                    else:
+                        new_k = k.replace(desired_decoder+'.', '')
+                        state_dict[new_k] = state_dict[k]
+                    state_dict.pop(k)
+                elif undesired_decoder in k:
+                    state_dict.pop(k)
+
+        # for training from dual decoder (always using decoder 1)
+        elif any(['decoder1' in x for x in state_dict.keys()]):
+            logger.info("Loading weights from decoder1 for further training")
+            desired_decoder = 'decoder1'
+            undesired_decoder = 'decoder2'
+            for k in list(state_dict.keys()):
+                if desired_decoder in k:
+                    if 'version' in k:
+                        state_dict['decoder.version'] = state_dict[k]
+                    else:
+                        new_k = k.replace(desired_decoder+'.', '')
+                        state_dict[new_k] = state_dict[k]
+                    state_dict.pop(k)
+                elif undesired_decoder in k:
+                    state_dict.pop(k)
+
 
         prefix = name + "." if name != "" else ""
         current_head_names = (
@@ -263,23 +305,6 @@ class BARTModel(TransformerModel):
                 if prefix + "classification_heads." + k not in state_dict:
                     logger.info("Overwriting", prefix + "classification_heads." + k)
                     state_dict[prefix + "classification_heads." + k] = v
-
-        # for inference with dual decoder
-        # keep only one decoder based on the arguments
-        if 'decoder_number' in self.args:
-            desired_decoder = 'decoder' + str(self.args.decoder_number)
-            undesired_decoder = 'decoder' + str(3-self.args.decoder_number)
-            for k in list(state_dict.keys()):
-                if desired_decoder in k:
-                    if 'version' in k:
-                        state_dict['decoder.version'] = state_dict[k]
-                    else:
-                        new_k = k.replace(desired_decoder+'.', '')
-                        state_dict[new_k] = state_dict[k]
-                    state_dict.pop(k)
-                elif undesired_decoder in k:
-                    state_dict.pop(k)
-
 
 class BARTClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
