@@ -24,6 +24,7 @@ from fairseq.modules import (
     LayerNorm,
     PositionalEmbedding,
     SinusoidalPositionalEmbedding,
+    #RotaryPositionalEmbedding,
     TransformerDecoderLayer,
     TransformerEncoderLayer,
 )
@@ -118,6 +119,10 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='apply layernorm before each encoder block')
         parser.add_argument('--encoder-learned-pos', action='store_true',
                             help='use learned positional embeddings in the encoder')
+        parser.add_argument('--encoder-rotary-pos', action='store_true',
+                            help='use rotary positional embeddings in the encoder')
+        parser.add_argument('--rotary-emd-base', type=int, metavar='N', default=10000,
+                            help='rotary embedding base')
         parser.add_argument('--decoder-embed-path', type=str, metavar='STR',
                             help='path to pre-trained decoder embedding')
         parser.add_argument('--decoder-embed-dim', type=int, metavar='N',
@@ -130,6 +135,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='num decoder attention heads')
         parser.add_argument('--decoder-learned-pos', action='store_true',
                             help='use learned positional embeddings in the decoder')
+        parser.add_argument('--decoder-rotary-pos', action='store_true',
+                            help='use rotary positional embeddings in the decoder')
         parser.add_argument('--decoder-normalize-before', action='store_true',
                             help='apply layernorm before each decoder block')
         parser.add_argument('--decoder-output-dim', type=int, metavar='N',
@@ -332,6 +339,9 @@ class TransformerEncoder(FairseqEncoder):
             if not args.no_token_positional_embeddings
             else None
         )
+        # add rotary pos in MHA instead
+        # if args.encoder_rotary_pos:
+        #     self.embed_positions = RotaryPositionalEmbedding(embed_dim)
 
         if getattr(args, "layernorm_embedding", False):
             self.layernorm_embedding = LayerNorm(embed_dim)
@@ -589,6 +599,9 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if not args.no_token_positional_embeddings
             else None
         )
+        # add rotary pos in MHA instead
+        # if args.encoder_rotary_pos:
+        #     self.embed_positions = RotaryPositionalEmbedding(embed_dim)
 
         if getattr(args, "layernorm_embedding", False):
             self.layernorm_embedding = LayerNorm(embed_dim)

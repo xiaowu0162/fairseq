@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
 from fairseq import utils
-from fairseq.modules import LayerNorm, MultiheadAttention
+from fairseq.modules import LayerNorm, MultiheadAttention, RotaryPositionMultiHeadAttention
 from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
 from torch import Tensor
@@ -76,14 +76,25 @@ class TransformerEncoderLayer(nn.Module):
         )
 
     def build_self_attention(self, embed_dim, args):
-        return MultiheadAttention(
-            embed_dim,
-            args.encoder_attention_heads,
-            dropout=args.attention_dropout,
-            self_attention=True,
-            q_noise=self.quant_noise,
-            qn_block_size=self.quant_noise_block_size,
-        )
+        if args.encoder_rotary_pos:
+            return RotaryPositionMultiHeadAttention(
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+                rotary_emd_base=args.rotary_emd_base,
+            )
+        else:
+            return MultiheadAttention(
+                embed_dim,
+                args.encoder_attention_heads,
+                dropout=args.attention_dropout,
+                self_attention=True,
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
 
     def residual_connection(self, x, residual):
         return residual + x
@@ -246,18 +257,44 @@ class TransformerDecoderLayer(nn.Module):
     def build_self_attention(
         self, embed_dim, args, add_bias_kv=False, add_zero_attn=False
     ):
-        return MultiheadAttention(
-            embed_dim,
-            args.decoder_attention_heads,
-            dropout=args.attention_dropout,
-            add_bias_kv=add_bias_kv,
-            add_zero_attn=add_zero_attn,
-            self_attention=not getattr(args, "cross_self_attention", False),
-            q_noise=self.quant_noise,
-            qn_block_size=self.quant_noise_block_size,
-        )
+        if args.encoder_rotary_pos:
+            return RotaryPositionMultiHeadAttention(
+                embed_dim,
+                args.decoder_attention_heads,
+                dropout=args.attention_dropout,
+                add_bias_kv=add_bias_kv,
+                add_zero_attn=add_zero_attn,
+                self_attention=not getattr(args, "cross_self_attention", False),
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+                rotary_emd_base=args.rotary_emd_base,
+            )
+        else:
+            return MultiheadAttention(
+                embed_dim,
+                args.decoder_attention_heads,
+                dropout=args.attention_dropout,
+                add_bias_kv=add_bias_kv,
+                add_zero_attn=add_zero_attn,
+                self_attention=not getattr(args, "cross_self_attention", False),
+                q_noise=self.quant_noise,
+                qn_block_size=self.quant_noise_block_size,
+            )
 
     def build_encoder_attention(self, embed_dim, args):
+        # if args.encoder_rotary_pos:
+        #     return RotaryPositionMultiHeadAttention(
+        #         embed_dim,
+        #         args.decoder_attention_heads,
+        #         kdim=getattr(args, "encoder_embed_dim", None),
+        #         vdim=getattr(args, "encoder_embed_dim", None),
+        #         dropout=args.attention_dropout,
+        #         encoder_decoder_attention=True,
+        #         q_noise=self.quant_noise,
+        #         qn_block_size=self.quant_noise_block_size,
+        #         rotary_emd_base=args.rotary_emd_base,
+        #     )
+        # else:
         return MultiheadAttention(
             embed_dim,
             args.decoder_attention_heads,
