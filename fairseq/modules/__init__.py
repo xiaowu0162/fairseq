@@ -6,6 +6,7 @@
 
 from .adaptive_input import AdaptiveInput
 from .adaptive_softmax import AdaptiveSoftmax
+from .alibi_multihead_attention import ALiBiPositionMultiHeadAttention
 from .beamable_mm import BeamableMM
 from .character_token_embedder import CharacterTokenEmbedder
 from .conv_tbc import ConvTBC
@@ -41,6 +42,7 @@ from .vggblock import VGGBlock
 __all__ = [
     "AdaptiveInput",
     "AdaptiveSoftmax",
+    "ALiBiPositionMultiHeadAttention",
     "BeamableMM",
     "CharacterTokenEmbedder",
     "ConvTBC",

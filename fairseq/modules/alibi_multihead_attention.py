@@ -10,16 +10,25 @@ from fairseq import utils
 from fairseq.incremental_decoding_utils import with_incremental_state
 from fairseq.modules.fairseq_dropout import FairseqDropout
 from fairseq.modules.quant_noise import quant_noise
-from fairseq.modules.rotary_positional_embedding import (
-    RotaryPositionalEmbedding,
-    apply_rotary_pos_emb,
-)
+
+
+# based on https://github.com/ofirpress/attention_with_linear_biases/issues/5
+def get_slopes(n):
+    def get_slopes_power_of_2(n):
+        start = (2**(-2**-(math.log2(n)-3)))
+        ratio = start
+        return [start*ratio**i for i in range(n)]
+
+    if math.log2(n).is_integer():
+        return get_slopes_power_of_2(n)                   #In the paper, we only train models that have 2^a heads for some a. This function has
+    else:                                                 #some good properties that only occur when the input is a power of 2. To maintain that even
+        closest_power_of_2 = 2**math.floor(math.log2(n))  #when the number of heads is not a power of 2, we use this workaround. 
+        return get_slopes_power_of_2(closest_power_of_2) + get_slopes(2*closest_power_of_2)[0::2][:n-closest_power_of_2]
 
 
 @with_incremental_state
-class RotaryPositionMultiHeadAttention(nn.Module):
-    """Multi-headed attention with rotary positional embeddings.
-    # modified based on https://github.com/facebookresearch/fairseq/blob/main/fairseq/modules/espnet_multihead_attention.py
+class ALiBiPositionMultiHeadAttention(nn.Module):
+    """Multi-headed attention with ALiBi.
     """
 
     def __init__(
@@ -36,7 +45,7 @@ class RotaryPositionMultiHeadAttention(nn.Module):
         encoder_decoder_attention=False,
         q_noise=0.0,
         qn_block_size=8,
-        rotary_emd_base=10000,
+        max_positions_alibi=None
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -62,10 +71,6 @@ class RotaryPositionMultiHeadAttention(nn.Module):
             "Self-attention requires query, key and " "value to be of the same size"
         )
         
-        self.rotary_emb = RotaryPositionalEmbedding(
-            self.head_dim, base=rotary_emd_base
-        )
-
         self.k_proj = quant_noise(
             nn.Linear(self.kdim, embed_dim, bias=bias), q_noise, qn_block_size
         )
@@ -85,6 +90,15 @@ class RotaryPositionMultiHeadAttention(nn.Module):
             self.bias_v = Parameter(torch.Tensor(1, 1, embed_dim))
         else:
             self.bias_k = self.bias_v = None
+            
+        # initialization for ALiBi
+        context_position = torch.arange(max_positions_alibi)[:, None].to(self.out_proj.weight.device)#.cuda()
+        memory_position = torch.arange(max_positions_alibi)[None, :].to(self.out_proj.weight.device)#.cuda()
+        relative_position = memory_position - context_position 
+        relative_position = torch.abs(relative_position).unsqueeze(0).expand(num_heads, -1,-1)
+        self.slopes = torch.Tensor(get_slopes(num_heads)).to(self.out_proj.weight.device)*-1   #.cuda()*-1
+        self.alibi = self.slopes.unsqueeze(1).unsqueeze(1) * relative_position
+        self.alibi = self.alibi.view(1, num_heads, max_positions_alibi, max_positions_alibi)
 
         self.add_zero_attn = add_zero_attn
 
@@ -156,20 +170,8 @@ class RotaryPositionMultiHeadAttention(nn.Module):
         assert embed_dim == self.embed_dim
         assert list(query.size()) == [tgt_len, bsz, embed_dim]
         
-        # apply rotary positional embedding
-        T, B, C = tgt_len, bsz, embed_dim
-        query = query.view(T, B, self.num_heads, self.head_dim)
-        key = key.view(T, B, self.num_heads, self.head_dim)
-        value = value.view(T, B, self.num_heads, self.head_dim)
-        cos, sin = self.rotary_emb(value, seq_len=T)
-        query, key = apply_rotary_pos_emb(
-            query, key, cos, sin, offset=0
-        )  # offset is based on layer_past
-        query = query.view(T, B, self.num_heads * self.head_dim)
-        key = key.view(T, B, self.num_heads * self.head_dim)
-        value = value.view(T, B, self.num_heads * self.head_dim)
-        
-        # below is the same as MHA in fairseq
+        # Do not use pytorch version of MHA forward for ALiBi
+        '''
         if (
             not self.onnx_trace
             and not self.tpu  # don't use PyTorch version on TPUs
@@ -203,7 +205,7 @@ class RotaryPositionMultiHeadAttention(nn.Module):
                 k_proj_weight=self.k_proj.weight,
                 v_proj_weight=self.v_proj.weight,
             )
-
+        '''
         if incremental_state is not None:
             saved_state = self._get_input_buffer(incremental_state)
             if saved_state is not None and "prev_key" in saved_state:
@@ -295,7 +297,7 @@ class RotaryPositionMultiHeadAttention(nn.Module):
             if "prev_key_padding_mask" in saved_state:
                 prev_key_padding_mask = saved_state["prev_key_padding_mask"]
             assert k is not None and v is not None
-            key_padding_mask = RotaryPositionMultiHeadAttention._append_prev_key_padding_mask(
+            key_padding_mask = ALiBiPositionMultiHeadAttention._append_prev_key_padding_mask(
                 key_padding_mask=key_padding_mask,
                 prev_key_padding_mask=prev_key_padding_mask,
                 batch_size=bsz,
@@ -342,6 +344,12 @@ class RotaryPositionMultiHeadAttention(nn.Module):
                 )
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
+        
+        # new - apply ALiBi
+        attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+        attn_weights += self.alibi[:,:,:tgt_len,:src_len].to(attn_weights)
+        attn_weights = attn_weights.view(bsz*self.num_heads, tgt_len, src_len)
+        
         attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
 
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]

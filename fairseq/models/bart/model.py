@@ -305,8 +305,9 @@ def bart_large_architecture(args):
     args.encoder_attention_heads = getattr(args, "encoder_attention_heads", 16)
     args.encoder_normalize_before = getattr(args, "encoder_normalize_before", False)
     args.encoder_learned_pos = getattr(args, "encoder_learned_pos", True)
-    args.encoder_rotary_pos = getattr(args, "encoder_rotary_pos", True)
-    if args.encoder_rotary_pos:
+    args.encoder_rotary_pos = getattr(args, "encoder_rotary_pos", False)
+    args.encoder_alibi = getattr(args, "encoder_alibi", False)
+    if args.encoder_rotary_pos or args.encoder_alibi:
         args.encoder_learned_pos = False
     args.decoder_embed_path = getattr(args, "decoder_embed_path", None)
     args.decoder_embed_dim = getattr(args, "decoder_embed_dim", args.encoder_embed_dim)
@@ -317,8 +318,9 @@ def bart_large_architecture(args):
     args.decoder_attention_heads = getattr(args, "decoder_attention_heads", 16)
     args.decoder_normalize_before = getattr(args, "decoder_normalize_before", False)
     args.decoder_learned_pos = getattr(args, "decoder_learned_pos", True)
-    args.decoder_rotary_pos = getattr(args, "decoder_rotary_pos", True)
-    if args.decoder_rotary_pos:
+    args.decoder_rotary_pos = getattr(args, "decoder_rotary_pos", False)
+    args.decoder_alibi = getattr(args, "decoder_alibi", False)
+    if args.decoder_rotary_pos or args.decoder_alibi:
         args.decoder_learned_pos = False
     args.attention_dropout = getattr(args, "attention_dropout", 0.0)
     args.relu_dropout = getattr(args, "relu_dropout", 0.0)

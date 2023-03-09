@@ -24,7 +24,6 @@ from fairseq.modules import (
     LayerNorm,
     PositionalEmbedding,
     SinusoidalPositionalEmbedding,
-    #RotaryPositionalEmbedding,
     TransformerDecoderLayer,
     TransformerEncoderLayer,
 )
@@ -121,6 +120,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='use learned positional embeddings in the encoder')
         parser.add_argument('--encoder-rotary-pos', action='store_true',
                             help='use rotary positional embeddings in the encoder')
+        parser.add_argument('--encoder-alibi', action='store_true',
+                            help='use alibi in the encoder')
         parser.add_argument('--rotary-emd-base', type=int, metavar='N', default=10000,
                             help='rotary embedding base')
         parser.add_argument('--decoder-embed-path', type=str, metavar='STR',
@@ -137,6 +138,8 @@ class TransformerModel(FairseqEncoderDecoderModel):
                             help='use learned positional embeddings in the decoder')
         parser.add_argument('--decoder-rotary-pos', action='store_true',
                             help='use rotary positional embeddings in the decoder')
+        parser.add_argument('--decoder-alibi', action='store_true',
+                            help='use alibi in the decoder')
         parser.add_argument('--decoder-normalize-before', action='store_true',
                             help='apply layernorm before each decoder block')
         parser.add_argument('--decoder-output-dim', type=int, metavar='N',
